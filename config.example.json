@@ -1,0 +1,28 @@
+{
+    "mail": {
+        "host": "smtp.example.com",
+        "port": 25,
+        "from": "noreply@example.com",
+        "subject": "[WATCHDOG] Java Service Alert"
+    },
+    "recipients": [
+        "ops-team@example.com",
+        "admin@example.com"
+    ],
+    "check_interval_minutes": 15,
+    "stuck_threshold_minutes": 15,
+    "alert_repeat_interval_minutes": 15,
+    "log_file": "D:\\watchdog\\watchdog.log",
+    "services": [
+        {
+            "name": "my-service-a",
+            "log_directory": "D:\\apps\\my-service-a\\log",
+            "process_match": "my-service-a.jar"
+        },
+        {
+            "name": "my-service-b",
+            "log_directory": "D:\\apps\\my-service-b\\log",
+            "process_match": "my-service-b.jar"
+        }
+    ]
+}
