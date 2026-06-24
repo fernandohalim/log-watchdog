@@ -1,44 +1,15 @@
-# --- Compiled binaries ---
+# compiled binaries
 *.exe
-*.dll
-*.so
-*.dylib
-watchdog
+*.exe~
 
-# --- Real config (contains internal hostnames, paths, recipient emails) ---
-# Commit config.example.json instead; users copy it to config.json locally.
-config.json
-
-# --- Logs ---
+# log files
 *.log
 
-# --- Go ---
-# Test binaries and coverage
-*.test
-*.out
-coverage.txt
+# runtime state (per-service status, used for recovery emails)
+state.json
 
-# Dependencies (we use modules; uncomment if you ever vendor)
-# vendor/
-
-# Go workspace files
-go.work
-go.work.sum
-
-# --- IDE / editor ---
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# --- OS clutter ---
-.DS_Store
-Thumbs.db
-desktop.ini
-ehthumbs.db
-
-# --- Build / dist folders ---
-dist/
-build/
+# output / backup folders
 out/
+
+# configuration files (contains internal hostnames, paths, recipient emails)
+config.json

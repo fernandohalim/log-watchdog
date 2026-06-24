@@ -1,136 +1,104 @@
-# Java Services Watchdog
+# log watchdog
 
-A small Go-based Windows service that monitors Java apps for "stuck" or "crashed" states and emails you when something goes wrong.
+a lightweight go microservice that watches java services on windows for "stuck"
+or "crashed" states and emails you when something is wrong.
 
-## How it works
+each run is a single pass — no background loop, no installed service. you point
+windows task scheduler at the `.exe` and it does one check and exits. timing
+(how often to check) belongs to the scheduler, so the only knob in config is how
+long a log can sit idle before it counts as stuck.
 
-Every `check_interval_minutes`, for each configured service:
+## how it works
 
-1. **Find the newest `.log` file** (by modification time) in the service's log directory.
-2. **Check if the file is growing.** If its size hasn't increased for `stuck_threshold_minutes`, the service is flagged **STUCK**.
-3. **Check if the Java process is alive** by scanning all running processes for one whose command line contains the configured substring. If none found, the service is **CRASHED**.
-4. **If the log directory is unreadable or contains no `.log` file**, the service is flagged **UNKNOWN**. This usually means the directory was deleted, permissions changed, the drive is unmounted, or the service was reconfigured. UNKNOWN is treated as an alert-worthy condition (the process info is included in the detail so you can tell whether the underlying service is also down).
-5. If any service is STUCK, CRASHED, or UNKNOWN, send **one combined HTML email** to all recipients. The alert is **re-sent every `alert_repeat_interval_minutes`** until the service recovers.
-6. When a previously bad service goes back to HEALTHY, send a **recovery email**.
+on every run, for each configured service:
 
-In the email, statuses are color-coded: **STUCK** = amber, **CRASHED** = red, **UNKNOWN** = purple.
+1. **find the newest `.log` file** (by modification time) in the service's log directory.
+2. **check if it's gone idle.** if the newest log hasn't been written to for `stuck_threshold_minutes`, the service is flagged **STUCK**.
+3. **check if the java process is alive** by scanning running processes for one whose command line contains the configured substring. if none is found, the service is **CRASHED**.
+4. **if the log directory is unreadable or has no `.log` file**, the service is flagged **UNKNOWN** (drive unmounted, folder deleted, permissions changed, etc.).
+5. if any service is STUCK, CRASHED, or UNKNOWN, send **one combined HTML email** to all recipients.
+6. if a service that was bad on the previous run is now HEALTHY, send a **recovery email**.
 
-The watchdog logs everything to its own log file (`log_file` in config) — useful for troubleshooting.
+statuses are color-coded in the email: **STUCK** = amber, **CRASHED** = red, **UNKNOWN** = purple.
 
-## Project layout
+## features
 
-```
-watchdog/
-  main.go              entry point, flag parsing
-  config.go            config schema + loader
-  monitor.go           check loop, state machine, log file discovery
-  process.go           process matching via command-line substring
-  email.go             SMTP (no auth, no STARTTLS) + HTML templates
-  service.go           Windows service install/run/stop
-  logger.go            log file setup
-  go.mod
-  config.json          example config (edit before deploying)
-  install.bat          installs the Windows service
-  uninstall.bat        removes the Windows service
-```
+* **stateless checks:** stuck detection compares the newest log's mtime to now — no in-memory history needed.
+* **recovery emails:** a tiny `state.json` next to the exe remembers the last run's status so it can tell you when things come back.
+* **re-alerts on its own:** still bad next run? you get another alert. the repeat cadence is just your scheduler interval.
+* **json configured:** update services, recipients, and the stuck threshold without recompiling.
+* **single exe:** statically linked, no DLLs beyond windows itself — perfect for windows task scheduler.
 
-## Build
+## installation & build
 
-On a machine with Go installed (1.21+):
-
-```bat
-go mod tidy
-go build -o watchdog.exe
-```
-
-If you build on a non-Windows machine, cross-compile:
-
+1. clone the repository.
+2. compile the executable (go 1.21+):
 ```bash
-GOOS=windows GOARCH=amd64 go build -o watchdog.exe
+go build -o watchdog.exe .
+```
+to cross-compile from a non-windows machine:
+```bash
+GOOS=windows GOARCH=amd64 go build -o watchdog.exe .
 ```
 
-The resulting `watchdog.exe` is statically linked and has no DLL dependencies beyond Windows itself.
+## configuration
 
-## Deploy
+copy `config.example.json` to `config.json` (the exe reads `config.json` from
+its own folder) and edit:
 
-You have two paths depending on whether you have admin rights:
+| field | meaning |
+|--|--|
+| `mail.host`, `mail.port`, `mail.from`, `mail.subject` | SMTP relay (no auth, no STARTTLS) and the email envelope |
+| `recipients` | who gets the emails |
+| `stuck_threshold_minutes` | how long a log can be idle before the service is STUCK (default 15) |
+| `log_file` | where the watchdog appends its own run log |
+| `services[].name` | label shown in emails and the log |
+| `services[].log_directory` | folder holding the service's `.log` files |
+| `services[].process_match` | case-insensitive substring matched against process command lines |
 
-### A) With admin (recommended — service mode)
+## deploy with task scheduler
 
-1. Create a folder on the server, e.g. `D:\rs-fhalim\watchdog\`.
-2. Copy `watchdog.exe`, `config.example.json`, `install.bat`, `uninstall.bat` into it.
-3. **Rename `config.example.json` to `config.json`** and edit it:
-   - `recipients` — who gets emails
-   - `services` — your services (name, log directory, and the cmdline substring for matching the Java process)
-   - `mail.host`, `mail.from` — your SMTP relay and from-address
-   - `log_file` — where the watchdog logs its own activity
-4. **Right-click `install.bat` → Run as administrator.** This installs and starts the service.
+1. create a folder on the server, e.g. `D:\log-watchdog\`.
+2. copy `watchdog.exe` and your edited `config.json` into it.
+3. open task scheduler (`taskschd.msc`) → **create task**:
+   - **general:** run whether user is logged on or not; run with highest privileges (so it can read every process's command line).
+   - **triggers:** new → repeat task every e.g. 15 minutes, indefinitely.
+   - **actions:** start a program → program = the full path to `watchdog.exe`. set **start in** to the folder so it finds `config.json`.
+4. save. that's the whole deployment.
 
-To remove later: **right-click `uninstall.bat` → Run as administrator.**
-
-### B) Without admin (foreground mode)
-
-If you can't install Windows services, run the watchdog as a regular cmd window — same pattern as your existing Java services and log-janitor.
-
-1. Same folder setup as above (`watchdog.exe`, `config.example.json`, plus `run.bat`).
-2. **Rename `config.example.json` to `config.json`** and edit as above.
-3. **Double-click `run.bat`.** A minimized "JavaWatchdog" cmd window appears in your taskbar. That's it.
-
-To stop it: bring the minimized window to focus and press `Ctrl+C`, or right-click its taskbar entry and close it.
-
-**Auto-start on logon (still no admin needed):** Use the included `scheduled-task.xml`:
-
-1. Open Task Scheduler (`taskschd.msc`).
-2. Edit `scheduled-task.xml` and change the `<Command>` path to wherever you put `run.bat`.
-3. In Task Scheduler: **Action → Import Task...**, pick `scheduled-task.xml`.
-4. Confirm. The task runs as your user, at every logon, automatically.
-
-**Tradeoffs vs. service mode:**
-
-| | Service (admin) | Foreground (.bat / Task Scheduler) |
-|--|--|--|
-| Admin required | Yes | No |
-| Survives logoff | Yes | No — dies when user session ends |
-| Auto-starts on boot | Yes (before login) | Only after a user logs in |
-| Runs as | LocalSystem | Your user account |
-| Sees all java.exe cmdlines | Always | Only processes in same/lower session |
-
-Since your Java services already run as cmd windows (which means **someone has to stay logged in** to keep them alive), the foreground mode is functionally equivalent for your setup — the watchdog dies under the same conditions your monitored services would die anyway.
-
-## Operational commands
-
-```bat
-sc query JavaWatchdog                  REM check service state
-sc stop JavaWatchdog
-sc start JavaWatchdog
-watchdog.exe -debug -config config.json   REM run in foreground for testing
+to verify before scheduling, just run it once from a terminal in the folder:
+```bash
+watchdog.exe
 ```
+it prints each service's status to the console (and the log file) and exits.
 
-In `-debug` mode the watchdog runs in your console, prints everything to stdout, and stops on Ctrl+C. Great for verifying email delivery and process matching before installing the service.
+## services that don't write log files
 
-## Services that don't write log files
-
-If a service only prints to its cmd window (no file logging), edit its `.bat` to redirect stdout/stderr to a file the watchdog can see. See `sample-service.bat`. One-liner pattern:
-
+if a service only prints to its cmd window, redirect its output to a file the
+watchdog can see, then point `log_directory` at that folder:
 ```bat
 java -jar myservice.jar >> "D:\path\to\log\console.log" 2>&1
 ```
 
-After this, the watchdog treats it like any other service.
+## log rotation
 
-## Log rotation
+the watchdog appends to `log_file` and does **not** rotate it. if you already
+run `log-janitor`, add the watchdog's log folder to its `directories` list and
+it'll handle retention.
 
-The watchdog itself appends to `watchdog.log` and does **not** rotate it. If you already use your `log-janitor` Go app to clean logs, add the watchdog's log directory to its `directories` list and it'll handle retention automatically.
+## troubleshooting
 
-## Troubleshooting
+- **no alert email:** run `watchdog.exe` by hand and watch the console. confirm the SMTP relay accepts mail from your `from` address and this server's IP.
+- **false CRASHED alerts:** your `process_match` substring isn't matching the real java command line. check the actual cmdline with `Get-CimInstance Win32_Process | select ProcessId,CommandLine` and adjust.
+- **false STUCK alerts:** a genuinely idle service writes no logs. raise `stuck_threshold_minutes`, or have the app emit a heartbeat log line.
+- **no recovery email after a fix:** recovery is only sent if the *previous* run saw the service as bad. delete `state.json` to reset history.
 
-- **Service won't start:** Open **Event Viewer → Windows Logs → Application**, filter source `JavaWatchdog`. Common causes: bad path in `config.json`, missing log directory, malformed JSON.
-- **No alert email:** Run `watchdog.exe -debug -config config.json` and watch the console. Check that the SMTP relay accepts mail from `noreply@rintis.co.id` from this server's IP.
-- **False CRASHED alerts:** Your `process_match` substring may not be unique enough. The watchdog ignores its own PID but will only find one match. If the Java cmdline doesn't actually contain the substring you configured, the process won't be detected. Use the PowerShell command above to verify.
-- **False STUCK alerts:** A genuinely idle service (no traffic) won't write logs. Either raise `stuck_threshold_minutes`, or have the app emit a heartbeat log line on a timer.
+## project layout
 
-## Limitations / known gotchas
-
-- The watchdog reads command lines via the standard Windows process API. Running as **LocalSystem** (the default for installed services) gives it access to all processes' command lines.
-- If two services happen to share a command-line substring, the watchdog only finds the first match. Make `process_match` specific.
-- File-size based detection means a service that writes the *same number of bytes* but rewrites them in place (truncate + write) will look stuck. None of your Java logging frameworks do this, so it shouldn't matter, but worth knowing.
+```
+log-watchdog/
+  main.go              config, check logic, process matching, state, logging
+  email.go             SMTP (no auth, no STARTTLS) + HTML templates
+  go.mod
+  config.example.json  copy to config.json and edit before deploying
+```

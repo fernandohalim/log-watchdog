@@ -9,21 +9,21 @@ import (
 	"time"
 )
 
-func SendAlertEmail(cfg *Config, problems []*ServiceState) error {
+func SendAlertEmail(cfg *Config, problems []Result) error {
 	subj := fmt.Sprintf("%s — %d service(s) need attention", cfg.Mail.Subject, len(problems))
 	return sendMail(cfg, subj, buildAlertHTML(problems))
 }
 
-func SendRecoveryEmail(cfg *Config, recovered []*ServiceState) error {
+func SendRecoveryEmail(cfg *Config, recovered []Result) error {
 	subj := fmt.Sprintf("%s — %d service(s) recovered", cfg.Mail.Subject, len(recovered))
 	return sendMail(cfg, subj, buildRecoveryHTML(recovered))
 }
 
-// sendMail uses a plain SMTP conversation with no AUTH and no STARTTLS,
-// matching the Java sample (Session.getInstance(props) without authenticator).
-// net/smtp's SendMail helper would auto-negotiate STARTTLS if the server
-// advertises it, which would fail against an internal relay with no usable
-// cert — we avoid that by driving the client manually.
+// sendMail uses a plain SMTP conversation with no AUTH and no STARTTLS, matching
+// the internal relay (Java sample used Session.getInstance(props) with no
+// authenticator). net/smtp's SendMail helper would auto-negotiate STARTTLS if
+// advertised, which fails against a relay with no usable cert — so we drive the
+// client manually.
 func sendMail(cfg *Config, subject, htmlBody string) error {
 	addr := net.JoinHostPort(cfg.Mail.Host, fmt.Sprintf("%d", cfg.Mail.Port))
 
@@ -73,10 +73,10 @@ func sendMail(cfg *Config, subject, htmlBody string) error {
 	return c.Quit()
 }
 
-func buildAlertHTML(problems []*ServiceState) string {
+func buildAlertHTML(problems []Result) string {
 	var b strings.Builder
-	b.WriteString(htmlPrefix("Java Service Watchdog — Alert", "#b91c1c"))
 	host, _ := os.Hostname()
+	b.WriteString(htmlPrefix("Java Service Watchdog — Alert", "#b91c1c"))
 	b.WriteString(`<p>The following Java services on <b>` + htmlEsc(host) + `</b> need attention:</p>`)
 	b.WriteString(`<table cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #ccc;font-size:13px;">`)
 	b.WriteString(`<tr style="background:#f3f4f6;">`)
@@ -84,45 +84,45 @@ func buildAlertHTML(problems []*ServiceState) string {
 		b.WriteString(`<th style="border:1px solid #ccc;text-align:left;">` + h + `</th>`)
 	}
 	b.WriteString(`</tr>`)
-	for _, st := range problems {
+	for _, r := range problems {
 		color := "#f59e0b" // amber = STUCK
-		switch st.CurrentStatus {
+		switch r.Status {
 		case StatusCrashed:
 			color = "#dc2626" // red
 		case StatusUnknown:
 			color = "#7c3aed" // purple
 		}
-		pid := st.PID
-		if !st.ProcessAlive || pid == "" {
+		pid := r.PID
+		if !r.Alive || pid == "" {
 			pid = "NOT FOUND"
 		}
 		b.WriteString(`<tr>`)
-		b.WriteString(`<td style="border:1px solid #ccc;"><b>` + htmlEsc(st.Config.Name) + `</b></td>`)
-		b.WriteString(`<td style="border:1px solid #ccc;color:` + color + `;"><b>` + string(st.CurrentStatus) + `</b></td>`)
-		b.WriteString(`<td style="border:1px solid #ccc;">` + htmlEsc(st.DetectionDetail) + `</td>`)
-		b.WriteString(`<td style="border:1px solid #ccc;font-family:Consolas,monospace;font-size:12px;">` + htmlEsc(st.LastLogFile) + `</td>`)
+		b.WriteString(`<td style="border:1px solid #ccc;"><b>` + htmlEsc(r.Name) + `</b></td>`)
+		b.WriteString(`<td style="border:1px solid #ccc;color:` + color + `;"><b>` + string(r.Status) + `</b></td>`)
+		b.WriteString(`<td style="border:1px solid #ccc;">` + htmlEsc(r.Detail) + `</td>`)
+		b.WriteString(`<td style="border:1px solid #ccc;font-family:Consolas,monospace;font-size:12px;">` + htmlEsc(r.LogFile) + `</td>`)
 		b.WriteString(`<td style="border:1px solid #ccc;">` + htmlEsc(pid) + `</td>`)
 		b.WriteString(`</tr>`)
 	}
 	b.WriteString(`</table>`)
-	b.WriteString(`<p style="color:#6b7280;font-size:12px;margin-top:8px;">This alert will repeat until the services recover. A recovery email will be sent when they do.</p>`)
+	b.WriteString(`<p style="color:#6b7280;font-size:12px;margin-top:8px;">This alert repeats every scheduled run until the services recover. A recovery email is sent when they do.</p>`)
 	b.WriteString(htmlSuffix())
 	return b.String()
 }
 
-func buildRecoveryHTML(recovered []*ServiceState) string {
+func buildRecoveryHTML(recovered []Result) string {
 	var b strings.Builder
-	b.WriteString(htmlPrefix("Java Service Watchdog — Recovery", "#16a34a"))
 	host, _ := os.Hostname()
+	b.WriteString(htmlPrefix("Java Service Watchdog — Recovery", "#16a34a"))
 	b.WriteString(`<p>The following Java services on <b>` + htmlEsc(host) + `</b> have recovered:</p>`)
 	b.WriteString(`<table cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #ccc;font-size:13px;">`)
 	b.WriteString(`<tr style="background:#f3f4f6;">`)
 	b.WriteString(`<th style="border:1px solid #ccc;text-align:left;">Service</th>`)
 	b.WriteString(`<th style="border:1px solid #ccc;text-align:left;">Detail</th></tr>`)
-	for _, st := range recovered {
+	for _, r := range recovered {
 		b.WriteString(`<tr>`)
-		b.WriteString(`<td style="border:1px solid #ccc;"><b>` + htmlEsc(st.Config.Name) + `</b></td>`)
-		b.WriteString(`<td style="border:1px solid #ccc;">` + htmlEsc(st.DetectionDetail) + `</td>`)
+		b.WriteString(`<td style="border:1px solid #ccc;"><b>` + htmlEsc(r.Name) + `</b></td>`)
+		b.WriteString(`<td style="border:1px solid #ccc;">` + htmlEsc(r.Detail) + `</td>`)
 		b.WriteString(`</tr>`)
 	}
 	b.WriteString(`</table>`)

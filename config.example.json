@@ -9,10 +9,8 @@
         "ops-team@example.com",
         "admin@example.com"
     ],
-    "check_interval_minutes": 15,
     "stuck_threshold_minutes": 15,
-    "alert_repeat_interval_minutes": 15,
-    "log_file": "D:\\watchdog\\watchdog.log",
+    "log_file": "D:\\path\\to\\log-watchdog\\out\\watchdog.log",
     "services": [
         {
             "name": "my-service-a",
